@@ -6,24 +6,16 @@ Created on Wed Feb  7 11:44:02 2024
 """
 #%% --- SECTION: Imports ---
 import numpy as np
+import pandas as pd
 import os, glob
-import scipy.io
-import scipy.signal
-from scipy.ndimage import gaussian_filter1d
-from scipy.optimize import curve_fit, minimize
 import matplotlib.pyplot as plt
 import seaborn as sns 
 from utils import *
-import random as rnd
-from numpy.linalg import inv
-import sklearn
 import pickle
 import matplotlib.colors as mcolors       
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-import pandas as pd
 
 # --- SECTION: Inits ---
 # Path definition
@@ -52,49 +44,7 @@ cm = [mcolors.to_rgb(i) for i in cm]
 
 ctm = 1/2.54
 
-#%% --- SECTION: Utility Functions ---
-def task_selection(file_path, file_index):
-    """
-    Loads and processes task data file (txt) into filtered DataFrame.
-
-    Parameters
-    ----------
-    file_path : str
-        Path to task data file
-    file_index : int
-        Index to label file
-
-    Returns
-    -------
-    filtered_df : pd.Dataframe
-        DataFrame containing selected task variables (cols) and trials (rows) 
-    """
-    
-    df = txt2df(file_path)
-    df['monkey'] = file_path.split(os.path.sep)[-2]
-    
-    bool_cols = ['BCI_on', 'IDLE_on', 'Hit', 'Fb_uncert']
-    df[bool_cols] = df[bool_cols].apply(str2bool)
-
-    float_cols = ['Time', 'Trial', 'tgt_x', 'tgt_y', 'Rot_ang', 'SC']
-    df[float_cols] = df[float_cols].astype(float)
-    
-    df['file_index'] = file_index
-    df['target_direction'] = angle_wrap(np.rad2deg(np.arctan2(df['tgt_y'], df['tgt_x']))).astype(int)
-    
-    # Compute hit number based on reward stage for trial re-indexing
-    df['rew_sel'] = df['Stage'] == 'REWARD_BCI_1'
-    dfg = df.groupby(by='Trial')[['rew_sel']].any().rename(columns={'rew_sel': 'hit_sel'})
-    dfg['hit_number'] = np.cumsum(dfg['hit_sel'].astype(int))
-    
-    df = pd.merge(df, dfg, on='Trial', how='right')
-    df = df[df['hit_sel']]
-    
-    # Select trials after decoding calibration
-    filtered_df = df[(df['hit_number'] >= 192) & (df['SC'] == 0)]
-    
-    return filtered_df
- 
+#%% --- SECTION: Utility Functions --- 
 def trackers_selection(file_path):
     """
     Extracts cursor position and velocity from tracker file (txt).
