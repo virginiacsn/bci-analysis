@@ -159,7 +159,6 @@ def equal_cond_df(df):
 def add_median(x, **kwargs):
     plt.axvline(x.median(), c='k', ls='-', lw=1.5)
 
-
         
 
     
