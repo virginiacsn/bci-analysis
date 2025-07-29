@@ -4,6 +4,7 @@
 # Author: Virginia Casasnovas
 # Date: 2025-07-10
 
+#%% --- SECTION: Imports ---
 import numpy as np
 import pandas as pd
 import os, glob
@@ -11,6 +12,7 @@ from tqdm import tqdm
 import pickle
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import resample
+import random
 import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import *
@@ -20,7 +22,6 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 from sklearn import svm
-
 
 #%% --- SECTION: Inits ---
 data_root = '/Users/virginia/Desktop/'
@@ -99,25 +100,23 @@ def sliding_window(x, size, overlap, axis=0):
 
     return x_window
 
-def classify_neural_window(df, clf, cv_folds=5, w_size=20, w_overlap=10):
+def classify_neural_window(df, col, clf, cv_folds=5, w_size=20, w_overlap=10):
 
     trial_idx = range(len(df))
-    kf = KFold(n_splits=cv_folds, shuffle=True)
+    kf = KFold(n_splits=cv_folds, shuffle=False)
     kf.get_n_splits(trial_idx)
 
     all_scores = []
 
-    for i, (train_index, test_index) in enumerate(tqdm(kf.split(trial_idx), total=cv_folds)):
-        #print(f"Fold {i+1}:")
-        #print(f"  Train: index={train_index}")
-        #print(f"  Test:  index={test_index}")
-        X_train = df['density'].values[train_index]
+    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
+
+        X_train = df[col].values[train_index]
         X_train = np.stack(X_train, axis=1)
         X_train_w = sliding_window(X_train, w_size, w_overlap, axis=2)
         
         y_train = df['target_direction'].values[train_index]
 
-        X_test = df['density'].values[test_index]
+        X_test = df[col].values[test_index]
         X_test = np.stack(X_test, axis=1)
         X_test_w = sliding_window(X_test, w_size, w_overlap, axis=2)
 
@@ -144,7 +143,84 @@ def classify_neural_window(df, clf, cv_folds=5, w_size=20, w_overlap=10):
 
     return mean_scores, all_scores
 
-#%%
+def classify_neural(df, col, clf, cv_folds=5):
+
+    trial_idx = range(len(df))
+    kf = KFold(n_splits=cv_folds, shuffle=False)
+    kf.get_n_splits(trial_idx)
+
+    all_scores = []
+
+    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
+
+        X_train = df[col].values[train_index]
+        X_train = np.stack(X_train, axis=1)
+        
+        y_train = df['target_direction'].values[train_index]
+
+        X_test = df[col].values[test_index]
+        X_test = np.stack(X_test, axis=1)
+
+        y_test = df['target_direction'].values[test_index]
+
+        mdl = clf
+        mdl.fit(X_train, y_train)
+
+        all_scores.append(mdl.score(X_test, y_test))
+
+    all_scores = np.array(all_scores)
+    mean_scores = all_scores.mean(axis=0)
+
+    return mean_scores, all_scores
+
+def classify_neural_cross(df1, df2, col, clf, cv_folds=5):
+
+    trial_idx = range(len(df1))
+    kf = KFold(n_splits=cv_folds, shuffle=False)
+    kf.get_n_splits(df1)
+
+    all_scores_same = []
+    all_scores_cross = []
+
+    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
+
+        X_train = df1[col].values[train_index]
+        rep_size = X_train[0].shape[1]
+        X_train = np.concatenate(X_train, axis=1).T
+
+        y_train = df1['target_direction'].values[train_index]
+        y_train = np.repeat(y_train, rep_size)
+
+        X_test = df1[col].values[test_index]
+        X_test = np.concatenate(X_test, axis=1).T
+
+        y_test = df1['target_direction'].values[test_index]
+        y_test = np.repeat(y_test, rep_size)
+
+        test_index_df2 = random.sample(range(len(df2)), len(test_index))
+        
+        X_test_df2 = df2[col].values[test_index_df2]
+        X_test_df2 = np.concatenate(X_test_df2, axis=1).T
+
+        y_test_df2 = df2['target_direction'].values[test_index_df2]
+        y_test_df2 = np.repeat(y_test_df2, rep_size)
+
+        mdl = clf
+        mdl.fit(X_train, y_train)
+
+        all_scores_same.append(mdl.score(X_test, y_test))
+        all_scores_cross.append(mdl.score(X_test_df2, y_test_df2))
+
+
+    all_scores_same = np.array(all_scores_same)
+    mean_scores_same = all_scores_same.mean(axis=0)
+
+    all_scores_cross = np.array(all_scores_cross)
+    mean_scores_cross = all_scores_cross.mean(axis=0)
+
+    return mean_scores_same, mean_scores_cross
+
+#%% Load and transform data into DataFrame
 df_list = []
 
 for file_idx, (spike_file, task_file) in enumerate(tqdm(zip(spike_files, task_files), total=len(spike_files))):
@@ -217,7 +293,7 @@ for i, u in enumerate(sn_trial_average['uncertainty'].unique()):
     if i == 0:
         ax[i].set_ylabel('Firing rate [Hz]', fontsize=14)
 
-#%% PLOT: Neural population response, trail average 
+#%% PLOT: Neural population response, trial average 
 sel_mky = 'MY'
 sel_file = 0
 sel = (df['monkey'] == sel_mky) & (df['file_index'] == sel_file)
@@ -246,6 +322,7 @@ for i, u in enumerate(pp_trial_average['uncertainty'].unique()):
 clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=0))
 
 all_scores_list = []
+all_clf_list = []
 
 for m in monkey:
     print(f"Monkey: {m}")
@@ -256,7 +333,10 @@ for m in monkey:
         df_file = df_mky.loc[df_mky['file_index'] == file_idx]
 
         for unc in [False, True]:
-            mean_scores, all_scores = classify_neural_window(df_file.loc[df_file['uncertainty'] == unc], clf)
+            mean_scores, all_scores = classify_neural_window(
+                df_file.loc[df_file['uncertainty'] == unc], 
+                'density', clf)
+    
             n_folds, n_windows = all_scores.shape
             for fold in range(n_folds):
                 for t, time in enumerate(np.arange(-150, 550, 50)):
@@ -267,10 +347,10 @@ for m in monkey:
                         'fold': fold,
                         'time': time,
                         'score': all_scores[fold, t]*100})
-
+        
 scores_df = pd.DataFrame(all_scores_list)
 
-# %% PLOT: Within-condition classifier performance
+#%% PLOT: Within-condition classifier performance
 scores_df_mean = scores_df.groupby(by=['monkey', 'file_index', 'uncertainty', 'time'], as_index=False)[['score']].mean()
 
 tick_positions = [-200, 0, 200, 400, 600]
@@ -316,3 +396,55 @@ ax.set_title('Within-level', fontsize=14, fontweight='bold')
 ax.set_xlabel('Time from go cue [ms]', fontsize=14)
 ax.set_ylabel('Performance [%]', fontsize=14)
 ax.legend(loc='upper right', frameon=False)
+
+#%% Between-condition classification
+clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=0))
+
+mean_scores_list = []
+
+df['density_go'] = df['density'].apply(lambda x: x[:, 10:40])
+
+for m in monkey:
+    print(f"Monkey: {m}")
+    df_mky = df.loc[df['monkey'] == m]
+
+
+    for file_idx in df_mky['file_index'].unique():
+        print(f"File index: {file_idx}")
+        df_file = df_mky.loc[df_mky['file_index'] == file_idx]
+
+        mean_scores_same, mean_scores_cross = classify_neural_cross(
+            df_file.loc[df_file['uncertainty'] == False], 
+            df_file.loc[df_file['uncertainty'] == True],
+            'density_go', clf)
+        
+        mean_scores_list.append({
+                    'monkey': m,
+                    'file_index': file_idx,
+                    'score_same': mean_scores_same*100,
+                    'score_cross': mean_scores_cross*100})
+        
+scores_df = pd.DataFrame(mean_scores_list)
+scores_df['score_diff'] = scores_df['score_cross'] - scores_df['score_same']
+
+
+#%% PLOT: Between-condition classifier performance difference
+# For each monkey 
+plt.figure(figsize=(3, 4))
+ax = plt.gca()
+ax.axhline(color=(0.3, 0.3, 0.3), linewidth=1) 
+sns.barplot(data=scores_df, x='monkey', y='score_diff', 
+            color=my_pal['CRS'], width=0.6, capsize=0.1, err_kws={'linewidth': 1.5})
+sns.stripplot(data=scores_df, x='monkey', y='score_diff',
+              color='k', size=4, alpha=0.6, 
+              jitter=0.15, legend=False, dodge=True)
+ax.spines[['right', 'top']].set_visible(False)
+ax.spines[['left', 'bottom']].set_linewidth(1)
+ax.tick_params(axis='both', labelsize=13, width=1, length=3, direction='in')
+ax.margins(0.2, 0.2)
+#ax.set_ylim([-30, 20])
+ax.set_title('Cross-level', fontsize=14, fontweight='bold')
+ax.set_xlabel('')
+ax.set_ylabel('Performance diff. [%]', fontsize=14)
+
+
