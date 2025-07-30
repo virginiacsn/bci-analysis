@@ -11,7 +11,7 @@ import os, glob
 from tqdm import tqdm
 import pickle
 from scipy.ndimage import gaussian_filter1d
-from scipy.signal import resample
+from scipy.interpolate import interp1d
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -30,7 +30,7 @@ meta = {
     'project' : '',
     'task' : 'BMI',
     'taskAlias' : 'pool_py',
-    'subject': 'zep'
+    'subject': 'yod'
         }
 meta['superfolder_pool'] = os.path.join(data_root, meta['task'], meta['taskAlias'], 'pool')
 meta['superfolder'] = os.path.join(data_root, meta['task'], meta['taskAlias'], meta['subject'])
@@ -51,14 +51,13 @@ unc_lab = {False: 'CRS', True: 'CLD'}
 # %% Functions
 def extract_trial_data(spike_data, task_df, start_stage='LEAVE_FIX_MEM_BCI_1', end_stage='LEAVE_FIX_MEM_BCI_1', t_start_add=-0.4, t_end_add=0.6):
     
-    firing = spike_data[:, 1:].T/0.05
-    spike_time = spike_data[:, 0]
-        
     firing_data, density_data = [], []
     target_data, uncert_data = [], []
+
+    spike_time = spike_data[:, 0]
     
     for i in np.unique(task_df['hit_number']):
-        
+
         trial_sel = (task_df['hit_number'] == i) 
 
         t_start = task_df.loc[trial_sel & (task_df['Stage'] == start_stage)]['Time'].values[0]
@@ -66,10 +65,10 @@ def extract_trial_data(spike_data, task_df, start_stage='LEAVE_FIX_MEM_BCI_1', e
 
         if start_stage == end_stage:
             t_end = t_start+t_end_add
-            idx_spk_end = np.argmin(abs(spike_time-t_start))+int((t_end_add+0.01)/0.05)
+            idx_spk_end = np.argmin(abs(spike_time-t_start))+int(round((t_end_add+0.01)/0.05))+1
         else:
             t_end = task_df.loc[trial_sel & (task_df['Stage'] == end_stage)]['Time'].values[-1]
-            idx_spk_end = np.argmin(abs(spike_time-(t_end+t_end_add)))
+            idx_spk_end = np.argmin(abs(spike_time-(t_end+t_end_add)))+1
 
         if (t_end - (t_start+t_start_add)) + 0.01 < (t_end_add - t_start_add):
             continue
@@ -77,15 +76,20 @@ def extract_trial_data(spike_data, task_df, start_stage='LEAVE_FIX_MEM_BCI_1', e
         if len(range(idx_spk_start, idx_spk_end)) < int((t_end - (t_start+t_start_add))/0.05):
             continue   
 
+        firing = spike_data[:, 1:].T/0.05
         firing_data_trial = firing[:, idx_spk_start:idx_spk_end]
         firing_data.append(firing_data_trial)
 
-        num_timepts = firing_data_trial.shape[1]
-        firing_resampled = resample(firing_data_trial, num_timepts*10, axis=1)
-        density_data_trial = gaussian_filter1d(firing_resampled, sigma=5)
-        density_data_trial[density_data_trial < 0] = 0
-        density_data.append(density_data_trial)
+        time_trial = spike_time[idx_spk_start:idx_spk_end]
 
+        f_interp = interp1d(time_trial, firing_data_trial, axis=1,
+                            kind='linear', fill_value=0.0, bounds_error=False)
+        dens_time = np.linspace(time_trial[0], time_trial[-1], (len(time_trial)-1)*10+1)
+        firing_resampled = f_interp(dens_time)
+        
+        density_data_trial = gaussian_filter1d(firing_resampled, sigma=5)
+        density_data.append(density_data_trial)
+    
         target_data.append(task_df.loc[trial_sel, 'target_direction'].values[0])
         uncert_data.append(task_df.loc[trial_sel, 'Fb_uncert'].values[0])
 
@@ -220,47 +224,57 @@ def classify_neural_cross(df1, df2, col, clf, cv_folds=5):
 
     return mean_scores_same, mean_scores_cross
 
-#%% Load and transform data into DataFrame
-df_list = []
+#%% Compute or load DataFrame
+all_mky = True # Load Dataframe from both monkeys
+overwrite = False # Overwrite DataFrame
+file_path = os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl')
 
-for file_idx, (spike_file, task_file) in enumerate(tqdm(zip(spike_files, task_files), total=len(spike_files))):
-    spike_data = pd.read_csv(spike_file).to_numpy()
-    task_data = task_selection(task_file, file_idx)
-    spk, dens, target, uncert = extract_trial_data(spike_data, task_data, t_start_add=-0.2, t_end_add=0.6)
-    df_file = pd.DataFrame({
-        'monkey': mky_lab[task_data.monkey.values[0]],
-        'file_index': file_idx,
-        'uncertainty': uncert,
-        'target_direction': target,
-        'density': dens})
-    
-    neuron_filter = df_file.groupby(['target_direction']).agg(
-        density=('density', lambda group: np.stack(group).mean(axis=0).mean(axis=1))).reset_index()
-    neuron_filter = np.max(np.stack(neuron_filter['density'].values), axis=0) > 2
-    df_file['density'] = df_file['density'].apply(lambda x: x[neuron_filter, :])
+if not os.path.exists(file_path) or overwrite:
 
-    df_list.append(df_file)
+    # Load and transform data into DataFrame
+    df_list = []
 
-df = pd.concat(df_list, ignore_index=True)
+    for file_idx, (spike_file, task_file) in enumerate(tqdm(zip(spike_files, task_files), total=len(spike_files))):
+        spike_data = pd.read_csv(spike_file).to_numpy()
+        task_data = task_selection(task_file, file_idx)
+        spk, dens, target, uncert = extract_trial_data(spike_data, task_data, t_start_add=-0.2, t_end_add=0.6)
+        df_file = pd.DataFrame({
+            'monkey': mky_lab[task_data.monkey.values[0]],
+            'file_index': file_idx,
+            'uncertainty': uncert,
+            'target_direction': target,
+            'density': dens})
+        
+        neuron_filter = df_file.groupby(['target_direction']).agg(
+            density=('density', lambda group: np.stack(group).mean(axis=0).mean(axis=1))).reset_index()
+        neuron_filter = np.max(np.stack(neuron_filter['density'].values), axis=0) > 2
+        df_file['density'] = df_file['density'].apply(lambda x: x[neuron_filter, :])
+
+        df_list.append(df_file)
+
+    df = pd.concat(df_list, ignore_index=True)
+
+    # Save DataFrame
+    with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'wb') as file: 
+        pickle.dump(df, file) 
+else:
+    if all_mky:
+        with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'yod', 'df_clf_MY.pkl'), 'rb') as file:
+            df_y = pickle.load(file)
+            
+        with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'zep', 'df_clf_MZ.pkl'), 'rb') as file:
+                df_z = pickle.load(file)
+
+        df = pd.concat([df_y, df_z], ignore_index=True)
+
+        monkey = ['MY', 'MZ']
+    else:
+        with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'wb') as file: 
+            df = pickle.load(file) 
 
 #%% Number of trials per condition
 df_counts = df.groupby(['monkey', 'uncertainty', 'target_direction'])['density'].count()
 print(df_counts)
-
-#%% Save dataframe
-with open(os.path.join(meta['superfolder'], 'df_clf_MZ.pkl'), 'wb') as file: 
-    pickle.dump(df, file) 
-    
-#%% Load and merge dataframes
-with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'yod', 'df_clf_MY.pkl'), 'rb') as file:
-        df_y = pickle.load(file)
-        
-with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'zep', 'df_clf_MZ.pkl'), 'rb') as file:
-        df_z = pickle.load(file)
-
-df = pd.concat([df_y, df_z], ignore_index=True)
-
-monkey = ['MY', 'MZ']
 
 #%% PLOT: single-neuron response, trial average
 sel_mky = 'MY'
@@ -270,8 +284,8 @@ sel = (df['monkey'] == sel_mky) & (df['file_index'] == sel_file)
 sn_trial_average = df.loc[sel].groupby(['target_direction', 'uncertainty']).agg(
     density=('density', lambda group: np.stack(group).mean(axis=0))).reset_index()
 
-neu_plt = 2
-time = np.arange(-200, 600, 5)
+neu_plt = 1
+time = np.arange(-200, 605, 5)
 tick_positions = [-200, 0, 200, 400, 600]
 tick_labels = ['-200', '0', '200', '400', '600']
 
@@ -408,7 +422,6 @@ for m in monkey:
     print(f"Monkey: {m}")
     df_mky = df.loc[df['monkey'] == m]
 
-
     for file_idx in df_mky['file_index'].unique():
         print(f"File index: {file_idx}")
         df_file = df_mky.loc[df_mky['file_index'] == file_idx]
@@ -426,7 +439,6 @@ for m in monkey:
         
 scores_df = pd.DataFrame(mean_scores_list)
 scores_df['score_diff'] = scores_df['score_cross'] - scores_df['score_same']
-
 
 #%% PLOT: Between-condition classifier performance difference
 # For each monkey 
@@ -446,5 +458,3 @@ ax.margins(0.2, 0.2)
 ax.set_title('Cross-level', fontsize=14, fontweight='bold')
 ax.set_xlabel('')
 ax.set_ylabel('Performance diff. [%]', fontsize=14)
-
-
