@@ -10,9 +10,6 @@ import pandas as pd
 import os, glob
 from tqdm import tqdm
 import pickle
-from scipy.ndimage import gaussian_filter1d
-from scipy.interpolate import interp1d
-import random
 import matplotlib.pyplot as plt
 import seaborn as sns
 from utils import *
@@ -20,7 +17,6 @@ from neural_functions import *
 
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import KFold
 from sklearn import svm
 
 #%% --- SECTION: Inits ---
@@ -47,182 +43,6 @@ task_files = sorted(glob.glob(os.path.join(meta['superfolder'], "*_BCI_Task.txt"
 my_pal = {"CRS": [117/255, 107/255, 177/255], "CLD": [188/255, 189/255, 220/255]}
 my_pal2 = {"CRS": [190/255, 48/255, 54/255], "CLD": [44/255, 117/255, 179/255]}
 unc_lab = {False: 'CRS', True: 'CLD'}
-
-# %% Functions
-def extract_trial_data(spike_data, task_df, start_stage='LEAVE_FIX_MEM_BCI_1', end_stage='LEAVE_FIX_MEM_BCI_1', t_start_add=-0.4, t_end_add=0.6):
-    
-    firing_data, density_data = [], []
-    target_data, uncert_data = [], []
-
-    spike_time = spike_data[:, 0]
-    
-    for i in np.unique(task_df['hit_number']):
-
-        trial_sel = (task_df['hit_number'] == i) 
-
-        t_start = task_df.loc[trial_sel & (task_df['Stage'] == start_stage)]['Time'].values[0]
-        idx_spk_start = np.argmin(abs(spike_time-(t_start+t_start_add)))
-
-        if start_stage == end_stage:
-            t_end = t_start+t_end_add
-            idx_spk_end = np.argmin(abs(spike_time-t_start))+int(round((t_end_add+0.01)/0.05))+1
-        else:
-            t_end = task_df.loc[trial_sel & (task_df['Stage'] == end_stage)]['Time'].values[-1]
-            idx_spk_end = np.argmin(abs(spike_time-(t_end+t_end_add)))+1
-
-        if (t_end - (t_start+t_start_add)) + 0.01 < (t_end_add - t_start_add):
-            continue
-            
-        if len(range(idx_spk_start, idx_spk_end)) < int((t_end - (t_start+t_start_add))/0.05):
-            continue   
-
-        firing = spike_data[:, 1:].T/0.05
-        firing_data_trial = firing[:, idx_spk_start:idx_spk_end]
-        firing_data.append(firing_data_trial)
-
-        time_trial = spike_time[idx_spk_start:idx_spk_end]
-
-        f_interp = interp1d(time_trial, firing_data_trial, axis=1,
-                            kind='linear', fill_value=0.0, bounds_error=False)
-        dens_time = np.linspace(time_trial[0], time_trial[-1], (len(time_trial)-1)*10+1)
-        firing_resampled = f_interp(dens_time)
-        
-        density_data_trial = gaussian_filter1d(firing_resampled, sigma=5)
-        density_data.append(density_data_trial)
-    
-        target_data.append(task_df.loc[trial_sel, 'target_direction'].values[0])
-        uncert_data.append(task_df.loc[trial_sel, 'Fb_uncert'].values[0])
-
-    return firing_data, density_data, target_data, uncert_data
-
-def sliding_window(x, size, overlap, axis=0):
-
-    step = size-overlap
-    x_window = []
-    for s in range(0, x.shape[axis]-size+1, step):
-        x_window.append(np.take(x, np.arange(s, s+size), axis=axis))
-
-    return x_window
-
-def classify_neural_window(df, col, clf, cv_folds=5, w_size=20, w_overlap=10):
-
-    trial_idx = range(len(df))
-    kf = KFold(n_splits=cv_folds, shuffle=False)
-    kf.get_n_splits(trial_idx)
-
-    all_scores = []
-
-    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
-
-        X_train = df[col].values[train_index]
-        X_train = np.stack(X_train, axis=1)
-        X_train_w = sliding_window(X_train, w_size, w_overlap, axis=2)
-        
-        y_train = df['target_direction'].values[train_index]
-
-        X_test = df[col].values[test_index]
-        X_test = np.stack(X_test, axis=1)
-        X_test_w = sliding_window(X_test, w_size, w_overlap, axis=2)
-
-        y_test = df['target_direction'].values[test_index]
-
-        win_score = []
-        for trw, tew in zip(X_train_w, X_test_w):
-            mdl = clf
-
-            X_train_w_in = trw.reshape(trw.shape[0], -1).T
-            y_train_in = np.repeat(y_train, trw.shape[2])
-
-            mdl.fit(X_train_w_in, y_train_in)
-
-            X_test_w_in = tew.reshape(tew.shape[0], -1).T
-            y_test_in = np.repeat(y_test, tew.shape[2])
-
-            win_score.append(mdl.score(X_test_w_in, y_test_in))
-
-        all_scores.append(win_score)    
-
-    all_scores = np.array(all_scores)
-    mean_scores = all_scores.mean(axis=0)
-
-    return mean_scores, all_scores
-
-def classify_neural(df, col, clf, cv_folds=5):
-
-    trial_idx = range(len(df))
-    kf = KFold(n_splits=cv_folds, shuffle=False)
-    kf.get_n_splits(trial_idx)
-
-    all_scores = []
-
-    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
-
-        X_train = df[col].values[train_index]
-        X_train = np.stack(X_train, axis=1)
-        
-        y_train = df['target_direction'].values[train_index]
-
-        X_test = df[col].values[test_index]
-        X_test = np.stack(X_test, axis=1)
-
-        y_test = df['target_direction'].values[test_index]
-
-        mdl = clf
-        mdl.fit(X_train, y_train)
-
-        all_scores.append(mdl.score(X_test, y_test))
-
-    all_scores = np.array(all_scores)
-    mean_scores = all_scores.mean(axis=0)
-
-    return mean_scores, all_scores
-
-def classify_neural_cross(df1, df2, col, clf, cv_folds=5):
-
-    trial_idx = range(len(df1))
-    kf = KFold(n_splits=cv_folds, shuffle=False)
-    kf.get_n_splits(df1)
-
-    all_scores_same = []
-    all_scores_cross = []
-
-    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
-
-        X_train = df1[col].values[train_index]
-        rep_size = X_train[0].shape[1]
-        X_train = np.concatenate(X_train, axis=1).T
-
-        y_train = df1['target_direction'].values[train_index]
-        y_train = np.repeat(y_train, rep_size)
-
-        X_test = df1[col].values[test_index]
-        X_test = np.concatenate(X_test, axis=1).T
-
-        y_test = df1['target_direction'].values[test_index]
-        y_test = np.repeat(y_test, rep_size)
-
-        test_index_df2 = random.sample(range(len(df2)), len(test_index))
-        
-        X_test_df2 = df2[col].values[test_index_df2]
-        X_test_df2 = np.concatenate(X_test_df2, axis=1).T
-
-        y_test_df2 = df2['target_direction'].values[test_index_df2]
-        y_test_df2 = np.repeat(y_test_df2, rep_size)
-
-        mdl = clf
-        mdl.fit(X_train, y_train)
-
-        all_scores_same.append(mdl.score(X_test, y_test))
-        all_scores_cross.append(mdl.score(X_test_df2, y_test_df2))
-
-
-    all_scores_same = np.array(all_scores_same)
-    mean_scores_same = all_scores_same.mean(axis=0)
-
-    all_scores_cross = np.array(all_scores_cross)
-    mean_scores_cross = all_scores_cross.mean(axis=0)
-
-    return mean_scores_same, mean_scores_cross
 
 #%% Compute or load DataFrame
 all_mky = True # Load Dataframe from both monkeys
@@ -259,6 +79,7 @@ if not os.path.exists(file_path) or overwrite:
         pickle.dump(df, file) 
 else:
     if all_mky:
+       # Load DataFrames from both monkeys 
         with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'yod', 'df_clf_MY.pkl'), 'rb') as file:
             df_y = pickle.load(file)
             
@@ -269,6 +90,7 @@ else:
 
         monkey = ['MY', 'MZ']
     else:
+        # Load DataFrame from one monkey
         with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'wb') as file: 
             df = pickle.load(file) 
 
@@ -333,7 +155,7 @@ for i, u in enumerate(pp_trial_average['uncertainty'].unique()):
         ax[i].set_ylabel('Firing rate [Hz]', fontsize=14)
 
 #%% Within-condition classification
-clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=0))
+clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=42))
 
 all_scores_list = []
 all_clf_list = []
@@ -412,7 +234,7 @@ ax.set_ylabel('Performance [%]', fontsize=14)
 ax.legend(loc='upper right', frameon=False)
 
 #%% Between-condition classification
-clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=0))
+clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=42))
 
 mean_scores_list = []
 

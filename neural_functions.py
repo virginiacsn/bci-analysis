@@ -4,9 +4,13 @@
 # Date: 2021-10-07
 
 import os
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import sklearn
+from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import interp1d
+import random
 from utils import *
 
 def task_selection(file_path, file_index):
@@ -845,3 +849,302 @@ def bin_traj(task_df, bin_start=1, bin_end=10.5):
         task_df.loc[trial_sel, 'trial_len'] = trial_len
 
     return task_df
+
+
+def extract_trial_data(spike_data, task_df, start_stage='LEAVE_FIX_MEM_BCI_1', end_stage='LEAVE_FIX_MEM_BCI_1', t_start_add=-0.4, t_end_add=0.6):
+    """
+    Extracts spike, density and task data within time window for each trial.
+
+    Parameters
+    ----------
+    spike_data : np.ndarray
+        Spike matrix where rows are timepoints and columns are channels, first column is timepoints
+    task_df : pd.DataFrame
+        DataFrame with task data
+    start_stage : str
+        Start trial stage for extraction window
+    end_stage : str
+        End trial stage for extraction window
+    t_start_add : float
+        Time in s to add relative to start stage
+    t_end_add : float
+        Time in s to add relativo to end stage
+
+    Returns
+    -------
+    Each element in lists corresponds to data from a trial.
+
+    firing_data : list of np.ndarrays
+        Firing rate at 20Hz sampling rate (channels x timepoints)
+    density_data : list of np.ndarrays
+        Smoothed firing rates at 200Hz sampling rate (channels x timepoints)
+    target_data : list of int
+        Target direction of trial
+    uncert_data : list of bool
+        Uncertainty level of trial
+    """
+    
+    firing_data, density_data = [], []
+    target_data, uncert_data = [], []
+
+    spike_time = spike_data[:, 0]
+    
+    for i in np.unique(task_df['hit_number']):
+
+        trial_sel = (task_df['hit_number'] == i) 
+
+        t_start = task_df.loc[trial_sel & (task_df['Stage'] == start_stage)]['Time'].values[0]
+        idx_spk_start = np.argmin(abs(spike_time-(t_start+t_start_add)))
+
+        if start_stage == end_stage:
+            t_end = t_start+t_end_add
+            idx_spk_end = np.argmin(abs(spike_time-t_start))+int(round((t_end_add+0.01)/0.05))+1
+        else:
+            t_end = task_df.loc[trial_sel & (task_df['Stage'] == end_stage)]['Time'].values[-1]
+            idx_spk_end = np.argmin(abs(spike_time-(t_end+t_end_add)))+1
+
+        if (t_end - (t_start+t_start_add)) + 0.01 < (t_end_add - t_start_add):
+            continue
+            
+        if len(range(idx_spk_start, idx_spk_end)) < int((t_end - (t_start+t_start_add))/0.05):
+            continue   
+
+        firing = spike_data[:, 1:].T/0.05
+        firing_data_trial = firing[:, idx_spk_start:idx_spk_end]
+        firing_data.append(firing_data_trial)
+
+        time_trial = spike_time[idx_spk_start:idx_spk_end]
+
+        f_interp = interp1d(time_trial, firing_data_trial, axis=1,
+                            kind='linear', fill_value=0.0, bounds_error=False)
+        dens_time = np.linspace(time_trial[0], time_trial[-1], (len(time_trial)-1)*10+1)
+        firing_resampled = f_interp(dens_time)
+        
+        density_data_trial = gaussian_filter1d(firing_resampled, sigma=5)
+        density_data.append(density_data_trial)
+    
+        target_data.append(task_df.loc[trial_sel, 'target_direction'].values[0])
+        uncert_data.append(task_df.loc[trial_sel, 'Fb_uncert'].values[0])
+
+    return firing_data, density_data, target_data, uncert_data
+
+def sliding_window(x, size, overlap, axis=0):
+    """
+    Computes sliding window with overlap on data at given axis.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Array to compute windowing on
+    size : int
+        Size of sliding window in samples
+    overlap : int
+        Number of overlapping samples between consecutive windows
+    axis : int
+        Axis along which to compute windows
+
+ 
+    Returns
+    -------
+    x_window : list of np.ndarrays
+        Windows of x
+    """
+
+    step = size-overlap
+    x_window = []
+    for s in range(0, x.shape[axis]-size+1, step):
+        x_window.append(np.take(x, np.arange(s, s+size), axis=axis))
+
+    return x_window
+
+def classify_neural_window(df, col, clf, cv_folds=5, w_size=20, w_overlap=10):
+    """
+    Classifies neural data across sliding time windows into target direction and computes
+    classification accuracy via K-fold cross-validation.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with neural data and target direction
+    col : str
+        Name of column in df containing neural data
+    clf : sklearn.base.BaseEstimator
+        Sklearn classifier implementing .fit() and .score() methods
+    cv_folds : int
+        Number of folds for cross-validation.
+    w_size : int
+        Size of sliding window in samples
+    w_overlap : int
+        Number of overlapping samples between consecutive windows
+
+    Returns
+    -------
+    mean_scores : np.ndarray
+        Mean classification accuracy across folds for each time window
+    all_scores : np.ndarray
+        Classification accuracy for each fold and time window
+    """
+
+    trial_idx = range(len(df))
+    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=False)
+    kf.get_n_splits(trial_idx)
+
+    all_scores = []
+
+    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
+
+        X_train = df[col].values[train_index]
+        X_train = np.stack(X_train, axis=1)
+        X_train_w = sliding_window(X_train, w_size, w_overlap, axis=2)
+        
+        y_train = df['target_direction'].values[train_index]
+
+        X_test = df[col].values[test_index]
+        X_test = np.stack(X_test, axis=1)
+        X_test_w = sliding_window(X_test, w_size, w_overlap, axis=2)
+
+        y_test = df['target_direction'].values[test_index]
+
+        win_score = []
+        for trw, tew in zip(X_train_w, X_test_w):
+            mdl = clf
+
+            X_train_w_in = trw.reshape(trw.shape[0], -1).T
+            y_train_in = np.repeat(y_train, trw.shape[2])
+
+            mdl.fit(X_train_w_in, y_train_in)
+
+            X_test_w_in = tew.reshape(tew.shape[0], -1).T
+            y_test_in = np.repeat(y_test, tew.shape[2])
+
+            win_score.append(mdl.score(X_test_w_in, y_test_in))
+
+        all_scores.append(win_score)    
+
+    all_scores = np.array(all_scores)
+    mean_scores = all_scores.mean(axis=0)
+
+    return mean_scores, all_scores
+
+def classify_neural(df, col, clf, cv_folds=5):
+    """
+    Classifies neural data into target direction and computes classification accuracy 
+    via K-fold cross-validation.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with neural data and target direction
+    col : str
+        Name of column in df containing neural data
+    clf : sklearn.base.BaseEstimator
+        Sklearn classifier implementing .fit() and .score() methods
+    cv_folds : int
+        Number of folds for cross-validation.
+
+    Returns
+    -------
+    mean_scores : np.ndarray
+        Mean classification accuracy across folds
+    all_scores : np.ndarray
+        Classification accuracy for each fold
+    """
+
+    trial_idx = range(len(df))
+    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=False)
+    kf.get_n_splits(trial_idx)
+
+    all_scores = []
+
+    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
+
+        X_train = df[col].values[train_index]
+        X_train = np.stack(X_train, axis=1)
+        
+        y_train = df['target_direction'].values[train_index]
+
+        X_test = df[col].values[test_index]
+        X_test = np.stack(X_test, axis=1)
+
+        y_test = df['target_direction'].values[test_index]
+
+        mdl = clf
+        mdl.fit(X_train, y_train)
+
+        all_scores.append(mdl.score(X_test, y_test))
+
+    all_scores = np.array(all_scores)
+    mean_scores = all_scores.mean(axis=0)
+
+    return mean_scores, all_scores
+
+def classify_neural_cross(df1, df2, col, clf, cv_folds=5):
+    """
+    Classifies neural data into target direction and computes classification accuracy 
+    via K-fold cross-validation. Classifiers are trained of low-uncertainty trials
+    and tested on low- (same) and high- (cross) uncertainty trials.
+
+    Parameters
+    ----------
+    df1 : pd.DataFrame
+        DataFrame with neural data and target direction for low-uncertainty trials
+    df2 : pd.DataFrame
+        DataFrame with neural data and target direction for high-uncertainty trials
+    col : str
+        Name of column in df containing neural data
+    clf : sklearn.base.BaseEstimator
+        Sklearn classifier implementing .fit() and .score() methods
+    cv_folds : int
+        Number of folds for cross-validation.
+
+    Returns
+    -------
+    mean_scores_same : np.ndarray
+        Mean classification accuracy across folds when training and testing on low-uncertainty trials
+    mean_scores_cross : np.ndarray
+        Mean classification accuracy across folds when training on low-uncertainty and testing on high-uncertainty trials
+    """
+
+    trial_idx = range(len(df1))
+    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=False)
+    kf.get_n_splits(df1)
+
+    all_scores_same = []
+    all_scores_cross = []
+
+    for (train_index, test_index) in tqdm(kf.split(trial_idx), total=cv_folds):
+
+        X_train = df1[col].values[train_index]
+        rep_size = X_train[0].shape[1]
+        X_train = np.concatenate(X_train, axis=1).T
+
+        y_train = df1['target_direction'].values[train_index]
+        y_train = np.repeat(y_train, rep_size)
+
+        X_test = df1[col].values[test_index]
+        X_test = np.concatenate(X_test, axis=1).T
+
+        y_test = df1['target_direction'].values[test_index]
+        y_test = np.repeat(y_test, rep_size)
+
+        test_index_df2 = random.sample(range(len(df2)), len(test_index))
+        
+        X_test_df2 = df2[col].values[test_index_df2]
+        X_test_df2 = np.concatenate(X_test_df2, axis=1).T
+
+        y_test_df2 = df2['target_direction'].values[test_index_df2]
+        y_test_df2 = np.repeat(y_test_df2, rep_size)
+
+        mdl = clf
+        mdl.fit(X_train, y_train)
+
+        all_scores_same.append(mdl.score(X_test, y_test))
+        all_scores_cross.append(mdl.score(X_test_df2, y_test_df2))
+
+    all_scores_same = np.array(all_scores_same)
+    mean_scores_same = all_scores_same.mean(axis=0)
+
+    all_scores_cross = np.array(all_scores_cross)
+    mean_scores_cross = all_scores_cross.mean(axis=0)
+
+    return mean_scores_same, mean_scores_cross
