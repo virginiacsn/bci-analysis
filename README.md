@@ -1,6 +1,6 @@
 ## bci-analysis
 
-This repo contains code developed to analyse neural data during a  brain-computer interface (BCI) task. In our study, two rhesus monkeys performed a BCI-controlled center-out-reach task under different levels of visual feedback uncertainty. On each trial, monkeys either controlled a low-uncertainty cursor or a high-uncertainty cloud of dots. Neural recordings were collected from multi-electrode arrays implanted in motor and premotor cortex. 
+This repository contains code developed to analyse neural data during a  brain-computer interface (BCI) task. In our study, two rhesus monkeys performed a BCI-controlled center-out-reach task under different levels of visual feedback uncertainty. On each trial, monkeys either controlled a low-uncertainty cursor or a high-uncertainty cloud of dots. Neural recordings were collected from multi-electrode arrays implanted in motor and premotor cortex. 
 
 These analyses are part of a larger study published in [*Amann et al., 2025*](https://www.nature.com/articles/s41467-025-58738-x). 
 
