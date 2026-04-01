@@ -1,14 +1,13 @@
-# bci-analysis
+## bci-analysis
 
 Analysis code for a brain-computer interface (BCI) study examining how visual feedback uncertainty affects neural population dynamics during motor control. Two rhesus macaques performed a BCI-controlled center-out reach task under two uncertainty conditions: a low-uncertainty cursor (CRS) and a high-uncertainty cloud of dots (CLD). Neural activity was recorded from multi-electrode arrays implanted in motor and premotor cortex.
 
-This repository accompanies the publication:
-
-> **Amann et al. (2025).** _Nature Communications._ [[Link]](https://www.nature.com/articles/s41467-025-58738-x)
+These analyses are part of a larger study published in
+**Amann et al., 2025**. [[Link]](https://www.nature.com/articles/s41467-025-58738-x)
 
 ---
 
-## Repository Structure
+### Repository Structure
 
 ```
 bci-analysis/
@@ -22,9 +21,9 @@ bci-analysis/
 
 ---
 
-## Analyses
+### Analyses
 
-### Neural Activity Classification — `neural_analysis.py`
+#### Neural Activity Classification — `neural_analysis.py`
 
 Decodes instructed reach direction from neural population activity using support vector machines (SVMs), and compares encoding across uncertainty conditions.
 
@@ -32,15 +31,13 @@ Decodes instructed reach direction from neural population activity using support
 Sliding-window SVMs are trained and tested on trials from each uncertainty level independently. This quantifies how target direction information evolves relative to the go cue.
 
 **Cross-level classification**
-Classifiers trained on low-uncertainty (CRS) trials are tested on both CRS and CLD trials in a fixed peri-go-cue window (−50 to 150 ms). A reduction in accuracy on CLD trials relative to CRS trials indicates reduced generalization of the neural population code across conditions.
+Classifiers trained on low-uncertainty (CRS) trials are tested on both CRS and CLD trials in a fixed peri-go-cue window (-50 to 150 ms). A reduction in accuracy on CLD trials relative to CRS trials indicates reduced generalization of the neural population code across conditions.
 
----
-
-### Neural Progress — `bci_progress.py`
+#### Neural Progress — `bci_progress.py`
 
 During experiments, neural activity was decoded in real time into a velocity command via a velocity-based Kalman filter. The component of this decoded velocity that reflects the projection of neural activity onto velocity space is referred to as the **neural vector**.
 
-**Neural progress** is defined as the projection of the neural vector onto the cursor-to-target direction at each time step — a scalar quantity that captures how effectively neural activity drives movement toward the target.
+**Neural progress** is defined as the projection of the neural vector onto the cursor-to-target direction at each time step, a scalar quantity that captures how effectively neural activity drives movement toward the target.
 
 <p align="left">
   <img src="images/bci_gh.png" width="650" />
@@ -55,9 +52,9 @@ Key analyses include:
 
 ---
 
-## Code Overview
+### Code Overview
 
-### `neural_functions.py`
+#### `neural_functions.py`
 
 Core functions for data loading, trial alignment, neural decoding, and progress computation:
 
@@ -73,13 +70,13 @@ Core functions for data loading, trial alignment, neural decoding, and progress 
 | `get_submov_*()`           | Submovement detection and nearest-neighbor analysis                     |
 | `bin_traj()`               | Time-aligned trajectory averaging                                       |
 
-### `utils.py`
+#### `utils.py`
 
 General-purpose utilities including file parsing (`txt2df`), angular math (`angle_wrap`, `angle_between`), statistical testing (`stat_test`), and trial-count balancing across conditions (`equal_cond_df`).
 
 ---
 
-## Data
+### Data
 
 Data are not included in this repository. Per-session data files are expected at `/path/to/BMI/pool_py/{subject}/` with the following naming conventions:
 
@@ -94,7 +91,7 @@ Processed DataFrames are cached as `.pkl` files and reloaded via the `overwrite`
 
 ---
 
-## Requirements
+### Requirements
 
 - Python 3
 - NumPy
