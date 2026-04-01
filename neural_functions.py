@@ -206,7 +206,7 @@ def reconstruct_KF(task_df, spike_file, decoder_file, pos, vel):
         else:
             print(f"File: {task_df['file_index'].values[0]}, Trial {i}: Contains NaNs")
     
-    return pos_true, pos_rec, uncert_id, df
+    return pos_true, pos_rec, uncert_ids, df
 
 def get_kss(decoder_file):
     """
@@ -986,7 +986,7 @@ def classify_neural_window(df, col, clf, cv_folds=5, w_size=20, w_overlap=10):
     """
 
     trial_idx = range(len(df))
-    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=False)
+    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=True)
     kf.get_n_splits(trial_idx)
 
     all_scores = []
@@ -1051,7 +1051,7 @@ def classify_neural(df, col, clf, cv_folds=5):
     """
 
     trial_idx = range(len(df))
-    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=False)
+    kf = sklearn.model_selection.KFold(n_splits=cv_folds)
     kf.get_n_splits(trial_idx)
 
     all_scores = []
@@ -1106,7 +1106,7 @@ def classify_neural_cross(df1, df2, col, clf, cv_folds=5):
     """
 
     trial_idx = range(len(df1))
-    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=False)
+    kf = sklearn.model_selection.KFold(n_splits=cv_folds, shuffle=True)
     kf.get_n_splits(df1)
 
     all_scores_same = []

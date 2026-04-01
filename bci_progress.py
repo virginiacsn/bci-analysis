@@ -12,8 +12,11 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors   
 import seaborn as sns 
 import pickle
-from utils import *
-from neural_functions import *
+from utils import add_median, angle_between, angle_wrap, change_mky_name, equal_cond_df, stat_test
+from neural_functions import (task_selection, trackers_selection, reconstruct_KF, get_kss,
+                               get_progress_ss, get_progress_time, get_progress_angles,
+                               bin_traj, bin_tortuosity, bin_RT_MT,
+                               get_submov_arc_df, get_submov_spd_df, get_submov_nn)
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)

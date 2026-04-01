@@ -12,8 +12,7 @@ from tqdm import tqdm
 import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils import *
-from neural_functions import *
+from neural_functions import task_selection, extract_trial_data, classify_neural_window, classify_neural_cross
 
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -31,6 +30,10 @@ meta = {
 meta['superfolder_pool'] = os.path.join(data_root, meta['task'], meta['taskAlias'], 'pool')
 meta['superfolder'] = os.path.join(data_root, meta['task'], meta['taskAlias'], meta['subject'])
 mky_lab = {'yod': 'MY', 'zep': 'MZ'}
+
+# Analysis parameters
+MIN_FIRING_RATE_HZ = 2         # neuron filter: minimum peak mean firing rate across targets
+GO_CUE_WINDOW = slice(10, 40)  # time bins for cross-level classification window
 
 # Saving figures
 meta['figfolder'] = os.path.join(data_root, meta['task'], meta['taskAlias'], 'Figs')
@@ -64,25 +67,26 @@ if not os.path.exists(file_path) or overwrite:
             'uncertainty': uncert,
             'target_direction': target,
             'density': dens})
-        
+
         neuron_filter = df_file.groupby(['target_direction']).agg(
             density=('density', lambda group: np.stack(group).mean(axis=0).mean(axis=1))).reset_index()
-        neuron_filter = np.max(np.stack(neuron_filter['density'].values), axis=0) > 2
+        neuron_filter = np.max(np.stack(neuron_filter['density'].values), axis=0) > MIN_FIRING_RATE_HZ
         df_file['density'] = df_file['density'].apply(lambda x: x[neuron_filter, :])
 
         df_list.append(df_file)
 
     df = pd.concat(df_list, ignore_index=True)
+    monkey = [mky_lab[meta['subject']]]
 
     # Save DataFrame
-    with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'wb') as file: 
-        pickle.dump(df, file) 
+    with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'wb') as file:
+        pickle.dump(df, file)
 else:
     if all_mky:
-       # Load DataFrames from both monkeys 
+       # Load DataFrames from both monkeys
         with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'yod', 'df_clf_MY.pkl'), 'rb') as file:
             df_y = pickle.load(file)
-            
+
         with open(os.path.join(data_root, meta['task'], meta['taskAlias'], 'zep', 'df_clf_MZ.pkl'), 'rb') as file:
                 df_z = pickle.load(file)
 
@@ -91,8 +95,9 @@ else:
         monkey = ['MY', 'MZ']
     else:
         # Load DataFrame from one monkey
-        with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'wb') as file: 
-            df = pickle.load(file) 
+        with open(os.path.join(meta['superfolder'], 'df_clf_M'+meta['subject'][0].upper()+'.pkl'), 'rb') as file:
+            df = pickle.load(file)
+        monkey = [mky_lab[meta['subject']]]
 
 #%% Number of trials per condition
 df_counts = df.groupby(['monkey', 'uncertainty', 'target_direction'])['density'].count()
@@ -155,7 +160,9 @@ for i, u in enumerate(pp_trial_average['uncertainty'].unique()):
         ax[i].set_ylabel('Firing rate [Hz]', fontsize=14)
 
 #%% Within-condition classification
-clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=42))
+clf = make_pipeline(StandardScaler(), svm.SVC(kernel='rbf', random_state=42))
+
+df['target_direction'] = df['target_direction'].astype('category')
 
 all_scores_list = []
 all_clf_list = []
@@ -234,11 +241,11 @@ ax.set_ylabel('Performance [%]', fontsize=14)
 ax.legend(loc='upper right', frameon=False)
 
 #%% Between-condition classification
-clf = make_pipeline(StandardScaler(), svm.SVC(kernel='linear', random_state=42))
+clf = make_pipeline(StandardScaler(), svm.SVC(kernel='rbf', random_state=42))
 
 mean_scores_list = []
 
-df['density_go'] = df['density'].apply(lambda x: x[:, 10:40])
+df['density_go'] = df['density'].apply(lambda x: x[:, GO_CUE_WINDOW])
 
 for m in monkey:
     print(f"Monkey: {m}")
