@@ -27,10 +27,10 @@ bci-analysis/
 
 Decodes instructed reach direction from neural population activity using support vector machines (SVMs), and compares encoding across uncertainty conditions.
 
-**Within-level classification over time**
+**Within-level classification over time**:
 Sliding-window SVMs are trained and tested on trials from each uncertainty level independently. This quantifies how target direction information evolves relative to the go cue.
 
-**Cross-level classification**
+**Cross-level classification**:
 Classifiers trained on low-uncertainty (CRS) trials are tested on both CRS and CLD trials in a fixed peri-go-cue window (-50 to 150 ms). A reduction in accuracy on CLD trials relative to CRS trials indicates reduced generalization of the neural population code across conditions.
 
 #### Neural Progress — `bci_progress.py`
